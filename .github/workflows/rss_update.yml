@@ -7,10 +7,8 @@ on:
   # 手動実行も可能にする
   workflow_dispatch:
 
-# 権限設定（重要！）
 permissions:
-  contents: write  # リポジトリの内容を書き込む権限
-  pages: write     # GitHub Pagesにデプロイする権限（必要な場合）
+  contents: write
 
 jobs:
   update-rss:
@@ -20,75 +18,74 @@ jobs:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@v4
         with:
-          # トークンを明示的に指定（必要に応じて）
           token: ${{ secrets.GITHUB_TOKEN }}
-          # 全履歴を取得（最新のコミットのみで十分）
           fetch-depth: 1
       
       - name: Pythonをセットアップ
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'  # 依存関係をキャッシュして高速化
       
       - name: 依存関係をインストール
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install requests beautifulsoup4 feedgen lxml
       
-      - name: RSSフィードを生成
+      - name: スクリプトを実行（デバッグモード）
         run: |
           python generate_rss.py
         env:
           RSS_OUTPUT_PATH: feed.xml
+          PYTHONUNBUFFERED: 1  # 出力をバッファリングしない
       
-      - name: 変更を確認
-        id: check_changes
+      - name: デバッグ情報を表示
+        if: always()
         run: |
-          # feed.xmlが存在するか確認
+          echo "=== ファイル一覧 ==="
+          ls -la
+          echo ""
+          echo "=== debug.log (存在する場合) ==="
+          cat debug.log || echo "debug.logは存在しません"
+          echo ""
+          echo "=== feed.xml (存在する場合) ==="
           if [ -f "feed.xml" ]; then
-            echo "feed.xmlが生成されました"
-            # 変更があるか確認（git diffを使用）
-            if git diff --quiet feed.xml; then
-              echo "changes=false" >> $GITHUB_OUTPUT
-              echo "変更はありません"
-            else
-              echo "changes=true" >> $GITHUB_OUTPUT
-              echo "変更を検出しました"
-            fi
+            echo "✅ feed.xmlが存在します"
+            echo "ファイルサイズ: $(wc -c < feed.xml) bytes"
+            echo "最初の20行:"
+            head -20 feed.xml
           else
-            echo "feed.xmlが生成されていません"
-            echo "changes=false" >> $GITHUB_OUTPUT
+            echo "❌ feed.xmlが存在しません"
           fi
       
-      - name: 生成したRSSをコミットしてプッシュ
-        if: steps.check_changes.outputs.changes == 'true'
+      - name: feed.xmlをアップロード（デバッグ用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rss-feed-output
+          path: |
+            feed.xml
+            debug.log
+            fetched_content.html
+            *.log
+            *.html
+          retention-days: 7
+          if-no-files-found: warn
+      
+      - name: feed.xmlをコミットしてプッシュ
+        if: success() && hashFiles('feed.xml') != ''
         run: |
-          # Gitの設定
+          echo "feed.xmlをコミットします"
           git config --local user.email "action@github.com"
           git config --local user.name "github-actions[bot]"
-          
-          # feed.xmlをステージング
           git add feed.xml
-          
-          # コミットメッセージに日時を含める
-          git commit -m "RSSフィードを自動更新 ($(date '+%Y-%m-%d %H:%M:%S'))"
-          
-          # プッシュ（リモートの変更を取得してからプッシュ）
-          git pull --rebase origin ${{ github.ref_name }}
+          git diff --staged --quiet || git commit -m "RSSフィードを自動更新 ($(date '+%Y-%m-%d %H:%M:%S'))"
           git push origin ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: 変更がない場合のログ
-        if: steps.check_changes.outputs.changes != 'true'
+      - name: feed.xmlがない場合の処理
+        if: failure() || hashFiles('feed.xml') == ''
         run: |
-          echo "RSSフィードに変更はありませんでした。"
-      
-      # オプション：生成されたRSSをArtifactとして保存（デバッグ用）
-      - name: RSSファイルをアップロード（デバッグ用）
-        uses: actions/upload-artifact@v4
-        with:
-          name: rss-feed
-          path: feed.xml
-          retention-days: 7
+          echo "⚠ feed.xmlの生成に失敗しました"
+          echo "デバッグ情報を確認してください"
+          exit 1
