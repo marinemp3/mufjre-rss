@@ -1,0 +1,94 @@
+name: RSS Feed Update
+
+on:
+  # スケジュール実行：毎週金曜日 中国時間 14:30（UTC 6:30）
+  schedule:
+    - cron: '30 6 * * 5'
+  # 手動実行も可能にする
+  workflow_dispatch:
+
+# 権限設定（重要！）
+permissions:
+  contents: write  # リポジトリの内容を書き込む権限
+  pages: write     # GitHub Pagesにデプロイする権限（必要な場合）
+
+jobs:
+  update-rss:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          # トークンを明示的に指定（必要に応じて）
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # 全履歴を取得（最新のコミットのみで十分）
+          fetch-depth: 1
+      
+      - name: Pythonをセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'  # 依存関係をキャッシュして高速化
+      
+      - name: 依存関係をインストール
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: RSSフィードを生成
+        run: |
+          python generate_rss.py
+        env:
+          RSS_OUTPUT_PATH: feed.xml
+      
+      - name: 変更を確認
+        id: check_changes
+        run: |
+          # feed.xmlが存在するか確認
+          if [ -f "feed.xml" ]; then
+            echo "feed.xmlが生成されました"
+            # 変更があるか確認（git diffを使用）
+            if git diff --quiet feed.xml; then
+              echo "changes=false" >> $GITHUB_OUTPUT
+              echo "変更はありません"
+            else
+              echo "changes=true" >> $GITHUB_OUTPUT
+              echo "変更を検出しました"
+            fi
+          else
+            echo "feed.xmlが生成されていません"
+            echo "changes=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: 生成したRSSをコミットしてプッシュ
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          # Gitの設定
+          git config --local user.email "action@github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # feed.xmlをステージング
+          git add feed.xml
+          
+          # コミットメッセージに日時を含める
+          git commit -m "RSSフィードを自動更新 ($(date '+%Y-%m-%d %H:%M:%S'))"
+          
+          # プッシュ（リモートの変更を取得してからプッシュ）
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 変更がない場合のログ
+        if: steps.check_changes.outputs.changes != 'true'
+        run: |
+          echo "RSSフィードに変更はありませんでした。"
+      
+      # オプション：生成されたRSSをArtifactとして保存（デバッグ用）
+      - name: RSSファイルをアップロード（デバッグ用）
+        uses: actions/upload-artifact@v4
+        with:
+          name: rss-feed
+          path: feed.xml
+          retention-days: 7
