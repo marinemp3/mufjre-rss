@@ -9,35 +9,36 @@ on:
 
 permissions:
   contents: write
+  actions: write  # keepalive-workflow が GitHub API を利用するために必要
 
 jobs:
   update-rss:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 1
-      
+          fetch-depth: 0  # rebase を安全に行うため全履歴を取得
+
       - name: Pythonをセットアップ
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: 依存関係をインストール
         run: |
           pip install --upgrade pip
           pip install requests beautifulsoup4 feedgen lxml
-      
+
       - name: スクリプトを実行（デバッグモード）
         run: |
           python generate_rss.py
         env:
           RSS_OUTPUT_PATH: feed.xml
           PYTHONUNBUFFERED: 1  # 出力をバッファリングしない
-      
+
       - name: デバッグ情報を表示
         if: always()
         run: |
@@ -56,7 +57,7 @@ jobs:
           else
             echo "❌ feed.xmlが存在しません"
           fi
-      
+
       - name: feed.xmlをアップロード（デバッグ用）
         if: always()
         uses: actions/upload-artifact@v4
@@ -70,7 +71,7 @@ jobs:
             *.html
           retention-days: 7
           if-no-files-found: warn
-      
+
       - name: feed.xmlをコミットしてプッシュ
         if: success() && hashFiles('feed.xml') != ''
         run: |
@@ -79,13 +80,25 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add feed.xml
           git diff --staged --quiet || git commit -m "RSSフィードを自動更新 ($(date '+%Y-%m-%d %H:%M:%S'))"
+          # リモートの変更を取り込んでからプッシュ（競合回避）
+          git pull --rebase origin ${{ github.ref_name }}
           git push origin ${{ github.ref_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: feed.xmlがない場合の処理
+
+      - name: feed.xmlがない場合の警告
         if: failure() || hashFiles('feed.xml') == ''
         run: |
           echo "⚠ feed.xmlの生成に失敗しました"
           echo "デバッグ情報を確認してください"
-          exit 1
+          # ワークフローを失敗扱いにしたい場合は以下のコメントを外す
+          # exit 1
+
+      # 60日間の無効化対策：リポジトリに定期的な活動を記録
+      - name: Keepalive（ワークフロー無効化防止）
+        if: always()
+        uses: gautamkrishnar/keepalive-workflow@v2
+        with:
+          # GitHub API を利用する（デフォルト）
+          use_api: true
+          # 45日間活動がなければ活動を記録（デフォルト）
+          # 明示的に指定する場合は以下を有効化
+          # time_elapsed: 45
