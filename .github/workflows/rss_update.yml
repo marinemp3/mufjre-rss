@@ -9,7 +9,7 @@ on:
 
 permissions:
   contents: write
-  actions: write  # keepalive-workflow が GitHub API を利用するために必要
+  actions: write  # keepalive アクションが GitHub API を利用するために必要
 
 jobs:
   update-rss:
@@ -95,10 +95,7 @@ jobs:
       # 60日間の無効化対策：リポジトリに定期的な活動を記録
       - name: Keepalive（ワークフロー無効化防止）
         if: always()
-        uses: gautamkrishnar/keepalive-workflow@v2
+        uses: entepotenz/keep-github-actions-alive-min-dependencies@v1
         with:
-          # GitHub API を利用する（デフォルト）
-          use_api: true
-          # 45日間活動がなければ活動を記録（デフォルト）
-          # 明示的に指定する場合は以下を有効化
-          # time_elapsed: 45
+          COMMIT_MESSAGE: "Keepalive: ワークフロー無効化防止"
+          TIME_ELAPSED_THRESHOLD_IN_DAYS: 50
